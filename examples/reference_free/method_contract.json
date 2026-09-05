@@ -1,0 +1,18 @@
+{
+  "$schema": "org.calcium-denoiser-audit.method-contract",
+  "schema_version": "1.0.0",
+  "method_id": "identity-fixture",
+  "source_identity": "audit_denoiser.fixture@1.1.1",
+  "checkpoint_identity": null,
+  "training_reference_access": "none",
+  "output_class": "full_movie",
+  "supported_metric_domains": [
+    "reference_free_movie"
+  ],
+  "required_inputs": [
+    "movie"
+  ],
+  "produced_outputs": [
+    "movie"
+  ]
+}

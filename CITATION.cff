@@ -1,0 +1,27 @@
+# Local software citation metadata, prepared 2026-09-05; not a release claim.
+# TODO doi: no archival software DOI has been minted.
+cff-version: 1.2.0
+message: "If you use this software, cite the software metadata and its accompanying manuscript."
+title: "calcium-denoiser-audit: executable evidence contracts for fail-closed biomedical evaluation"
+version: 1.2.0
+license: MIT
+repository-code: "https://github.com/seyedali-mousavi/audit-denoiser"
+type: software
+authors:
+  - family-names: Mousavi
+    given-names: "Seyed Ali"
+    affiliation: "School of Electrical and Computer Engineering, College of Engineering, University of Tehran, Tehran, Iran"
+    # orcid: TODO - blank until supplied by this author.
+  - family-names: "Badieirostami"
+    given-names: Majid
+    email: mbadiei@ut.ac.ir
+    affiliation: "School of Electrical and Computer Engineering, College of Engineering, University of Tehran, Tehran, Iran"
+    # orcid: TODO - blank until supplied by this author.
+keywords:
+  - biomedical software
+  - evaluation contracts
+  - evidence admissibility
+  - reproducibility
+  - fail-closed systems
+# The associated manuscript targets Computer Methods and Programs in Biomedicine.
+# It is not represented here as an accepted/published article, and no article DOI exists.

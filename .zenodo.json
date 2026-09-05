@@ -1,0 +1,15 @@
+{
+  "title": "calcium-denoiser-audit: executable evidence contracts for fail-closed biomedical evaluation",
+  "creators": [
+    {
+      "name": "Mousavi, Seyed Ali",
+      "affiliation": "School of Electrical and Computer Engineering, College of Engineering, University of Tehran, Tehran, Iran"
+    },
+    {
+      "name": "Badieirostami, Majid",
+      "affiliation": "School of Electrical and Computer Engineering, College of Engineering, University of Tehran, Tehran, Iran"
+    }
+  ],
+  "license": "MIT",
+  "upload_type": "software"
+}

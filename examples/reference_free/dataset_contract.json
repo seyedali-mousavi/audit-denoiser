@@ -1,0 +1,29 @@
+{
+  "$schema": "org.calcium-denoiser-audit.dataset-contract",
+  "schema_version": "1.0.0",
+  "dataset_id": "deterministic-reference-free-fixture",
+  "modality": "calcium_movie",
+  "axes": "THW",
+  "shape": [
+    64,
+    48,
+    48
+  ],
+  "dtype": "float32",
+  "units": "normalized_intensity",
+  "frame_rate_hz": 30.0,
+  "acquisition_id": "fixture-acquisition-1",
+  "independent_unit": "acquisition",
+  "nesting": [
+    "acquisition",
+    "frame",
+    "pixel"
+  ],
+  "reference_availability": "none",
+  "evidence_boundary": "reference_free",
+  "mask_availability": "none",
+  "alignment_state": "not_applicable",
+  "provenance": {
+    "source": "audit_denoiser deterministic fixture; software verification only"
+  }
+}

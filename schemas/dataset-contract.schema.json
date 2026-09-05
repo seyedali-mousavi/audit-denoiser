@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "org.calcium-denoiser-audit.dataset-contract",
+  "title": "DatasetContract 1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "dataset_id",
+    "modality",
+    "axes",
+    "shape",
+    "dtype",
+    "units",
+    "frame_rate_hz",
+    "acquisition_id",
+    "independent_unit",
+    "nesting",
+    "reference_availability",
+    "evidence_boundary",
+    "mask_availability",
+    "alignment_state",
+    "provenance"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "org.calcium-denoiser-audit.dataset-contract"
+    },
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "dataset_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "modality": {
+      "type": "string",
+      "minLength": 1
+    },
+    "axes": {
+      "type": "string",
+      "minLength": 1
+    },
+    "shape": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "dtype": {
+      "type": "string",
+      "minLength": 1
+    },
+    "units": {
+      "type": "string",
+      "minLength": 1
+    },
+    "frame_rate_hz": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "exclusiveMinimum": 0
+    },
+    "acquisition_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "independent_unit": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nesting": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "reference_availability": {
+      "enum": [
+        "exact_clean",
+        "pseudo_reference",
+        "none",
+        "event_truth_only"
+      ]
+    },
+    "evidence_boundary": {
+      "enum": [
+        "clean_reference",
+        "pseudo_reference",
+        "reference_free",
+        "trace_event_truth",
+        "locked_historical_final_test"
+      ]
+    },
+    "mask_availability": {
+      "type": "string",
+      "minLength": 1
+    },
+    "alignment_state": {
+      "enum": [
+        "not_applicable",
+        "unknown",
+        "unaligned",
+        "spatial_only",
+        "spatiotemporal"
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "source"
+      ]
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "org.calcium-denoiser-audit.method-contract",
+  "checkpoint_identity": null,
+  "method_id": "external-style-trace-method",
+  "output_class": "trace_only",
+  "produced_outputs": [
+    "traces"
+  ],
+  "required_inputs": [
+    "movie"
+  ],
+  "schema_version": "1.0.0",
+  "source_identity": "examples.audit_core_external_adapter.emit_trace_method@1.0.0",
+  "supported_metric_domains": [
+    "trace_fidelity"
+  ],
+  "training_reference_access": "none"
+}

@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "org.calcium-denoiser-audit.result-envelope",
+  "title": "CanonicalResultEnvelope 1.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "dataset_id",
+    "method_id",
+    "run_id",
+    "evidence_boundary",
+    "independent_unit",
+    "nesting",
+    "metric_id",
+    "metric_version",
+    "units",
+    "point_estimate",
+    "uncertainty",
+    "admissibility",
+    "warnings",
+    "taxonomy_version",
+    "provenance_parents",
+    "hashes"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "org.calcium-denoiser-audit.result-envelope"
+    },
+    "schema_version": {
+      "const": "1.1.0"
+    },
+    "dataset_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "method_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence_boundary": {
+      "enum": [
+        "clean_reference",
+        "pseudo_reference",
+        "reference_free",
+        "trace_event_truth",
+        "locked_historical_final_test"
+      ]
+    },
+    "independent_unit": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nesting": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "metric_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "metric_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "units": {
+      "type": "string",
+      "minLength": 1
+    },
+    "point_estimate": {
+      "type": [
+        "number",
+        "integer",
+        "null"
+      ]
+    },
+    "uncertainty": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "admissibility": {
+      "enum": [
+        "ADMISSIBLE",
+        "WITHHELD",
+        "INVALID"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "taxonomy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provenance_parents": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "hashes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "admissibility": {
+            "const": "ADMISSIBLE"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "point_estimate": {
+            "type": [
+              "number",
+              "integer"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "admissibility": {
+            "enum": [
+              "WITHHELD",
+              "INVALID"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "point_estimate": {
+            "type": "null"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "admissibility": {"const": "ADMISSIBLE"},
+          "metric_id": {
+            "enum": [
+              "psnr_to_clean",
+              "ssim_to_clean",
+              "amp_pres_to_clean",
+              "clean_derived_trace_fidelity"
+            ]
+          }
+        },
+        "required": ["admissibility", "metric_id"]
+      },
+      "then": {
+        "properties": {
+          "evidence_boundary": {"const": "clean_reference"},
+          "hashes": {
+            "required": ["dataset_contract_sha256", "clean_reference_sha256"],
+            "properties": {
+              "dataset_contract_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+              "clean_reference_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+            }
+          }
+        }
+      }
+    }
+  ]
+}

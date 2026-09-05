@@ -1,0 +1,29 @@
+{
+  "$schema": "org.calcium-denoiser-audit.dataset-contract",
+  "acquisition_id": "external-style-fixture-acquisition",
+  "alignment_state": "not_applicable",
+  "axes": "THW",
+  "dataset_id": "external-style-trace-fixture",
+  "dtype": "float32",
+  "evidence_boundary": "trace_event_truth",
+  "frame_rate_hz": 30.0,
+  "independent_unit": "acquisition",
+  "mask_availability": "none",
+  "modality": "temporal-imaging-fixture",
+  "nesting": [
+    "acquisition",
+    "frame",
+    "trace"
+  ],
+  "provenance": {
+    "source": "deterministic external-style software fixture"
+  },
+  "reference_availability": "event_truth_only",
+  "schema_version": "1.0.0",
+  "shape": [
+    64,
+    48,
+    48
+  ],
+  "units": "normalized_intensity"
+}

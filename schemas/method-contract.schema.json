@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "org.calcium-denoiser-audit.method-contract",
+  "title": "MethodAdapterContract 1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "method_id",
+    "source_identity",
+    "checkpoint_identity",
+    "training_reference_access",
+    "output_class",
+    "supported_metric_domains",
+    "required_inputs",
+    "produced_outputs"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "org.calcium-denoiser-audit.method-contract"
+    },
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "method_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_identity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "checkpoint_identity": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "training_reference_access": {
+      "type": "string",
+      "minLength": 1
+    },
+    "output_class": {
+      "enum": [
+        "full_movie",
+        "component_reconstruction",
+        "trace_only"
+      ]
+    },
+    "supported_metric_domains": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required_inputs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "produced_outputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
