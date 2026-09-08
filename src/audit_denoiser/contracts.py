@@ -579,7 +579,13 @@ def validate_result_against_context(
     result: CanonicalResultEnvelope, dataset: DatasetContract, method: MethodAdapterContract,
 ) -> CanonicalResultEnvelope:
     """Recheck context on emission/import; structural validate() alone is insufficient."""
+    result.validate()
     specification = MetricContract.from_dict(result.metric_contract) if result.metric_contract is not None else None
+    required = ["dataset_contract_sha256", "method_contract_sha256"]
+    if resolve_metric_contract(result.metric_id, specification) is not None:
+        required.append("metric_contract_sha256")
+    for key in required:
+        _require_sha256(result.hashes.get(key), f"result.hashes.{key}")
     status, reason, _ = contextual_admissibility(
         result.metric_id, dataset, method, hashes=result.hashes, metric_contract=specification,
     )
