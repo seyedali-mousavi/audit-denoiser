@@ -7,10 +7,11 @@ They deliberately avoid framework-specific model assumptions.
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import numpy as np
 
@@ -20,7 +21,7 @@ DATASET_SCHEMA_VERSION = "1.0.0"
 METHOD_SCHEMA_ID = "org.calcium-denoiser-audit.method-contract"
 METHOD_SCHEMA_VERSION = "1.0.0"
 RESULT_ENVELOPE_SCHEMA_ID = "org.calcium-denoiser-audit.result-envelope"
-RESULT_ENVELOPE_SCHEMA_VERSION = "1.1.0"
+RESULT_ENVELOPE_SCHEMA_VERSION = "1.2.0"
 
 OUTPUT_CLASSES = {"full_movie", "component_reconstruction", "trace_only"}
 EVIDENCE_BOUNDARIES = {
@@ -47,6 +48,9 @@ REFERENCE_FREE_METRICS = {
     "global_trace_lag1_autocorrelation",
     "temporal_difference_energy_ratio",
     "seam_energy_ratio",
+}
+WAVEFORM_CLEAN_REFERENCE_METRICS = {
+    "waveform_pearson_to_clean", "waveform_nrmse_to_clean", "waveform_snr_improvement_db",
 }
 
 
@@ -102,6 +106,90 @@ def _require_sha256(value: Any, field_name: str) -> str:
             f"{field_name} must be a 64-character SHA-256 digest",
         )
     return value.lower()
+
+
+def validate_numeric_array(array: np.ndarray) -> None:
+    """Accept real integer/float measurements, allowing legitimate dtype conversion.
+
+    Finiteness is an endpoint policy: finite_fraction must be able to inspect a
+    numerical array containing NaNs. Strings, booleans, objects, and complex arrays
+    are not a real-valued movie/trace output and must never be certified as one.
+    """
+    if np.asarray(array).dtype.kind not in "iuf":
+        raise ContractError("NONNUMERIC_DTYPE", f"expected real numeric array, found {np.asarray(array).dtype}")
+
+
+@dataclass(frozen=True)
+class MetricContract:
+    """Explicit endpoint requirements; external definitions need no core registration.
+
+    These declarations are trusted scientific policy, not proof that a chosen
+    endpoint or reference is biologically appropriate. Known built-ins cannot be
+    weakened by supplying another definition with the same identifier.
+    """
+    metric_id: str
+    domain: str
+    evidence_boundaries: tuple[str, ...]
+    output_classes: tuple[str, ...]
+    requires_clean_reference: bool = False
+    version: str = "1.0.0"
+
+    def validate(self) -> "MetricContract":
+        for name in ("metric_id", "domain", "version"):
+            _require_text(getattr(self, name), name)
+        _text_sequence(self.evidence_boundaries, "evidence_boundaries")
+        _text_sequence(self.output_classes, "output_classes")
+        if not set(self.evidence_boundaries) <= EVIDENCE_BOUNDARIES:
+            raise ContractError("INCOMPATIBLE_EVIDENCE_BOUNDARY", "metric declares an unknown boundary")
+        if not set(self.output_classes) <= OUTPUT_CLASSES:
+            raise ContractError("UNSUPPORTED_OUTPUT_CLASS", "metric declares an unknown output class")
+        if not isinstance(self.requires_clean_reference, bool):
+            raise ContractError("INVALID_METRIC_CONTRACT", "requires_clean_reference must be boolean")
+        if self.requires_clean_reference and set(self.evidence_boundaries) != {"clean_reference"}:
+            raise ContractError("INVALID_METRIC_CONTRACT", "clean-dependent metrics require only clean_reference")
+        return self
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["evidence_boundaries"] = list(self.evidence_boundaries)
+        payload["output_classes"] = list(self.output_classes)
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "MetricContract":
+        try:
+            data = dict(payload)
+            for key in ("evidence_boundaries", "output_classes"):
+                data[key] = _text_sequence(data[key], key)
+            return cls(**data).validate()
+        except (TypeError, KeyError) as exc:
+            raise ContractError("INVALID_METRIC_CONTRACT", "incomplete or malformed metric contract") from exc
+
+
+def resolve_metric_contract(metric_id: str, specification: MetricContract | None = None) -> MetricContract | None:
+    """Resolve explicit requirements, never infer admissibility from an unknown ID."""
+    movie = ("full_movie", "component_reconstruction")
+    builtin = None
+    if metric_id in CLEAN_REFERENCE_METRICS:
+        builtin = MetricContract(metric_id, metric_id, ("clean_reference",), movie, True)
+    elif metric_id in WAVEFORM_CLEAN_REFERENCE_METRICS:
+        builtin = MetricContract(metric_id, "generic_waveform_fidelity", ("clean_reference",), ("trace_only",), True)
+    elif metric_id in REFERENCE_FREE_METRICS:
+        builtin = MetricContract(metric_id, "reference_free_movie", tuple(sorted(EVIDENCE_BOUNDARIES)), movie)
+    if specification is not None:
+        specification.validate()
+        if specification.metric_id != metric_id:
+            raise ContractError("METRIC_ID_MISMATCH", "request and metric contract identifiers differ")
+        if builtin is not None and specification != builtin:
+            raise ContractError("METRIC_CONTRACT_CONFLICT", "a built-in metric definition cannot be overridden")
+        return specification
+    return builtin
+
+
+def contract_digest(contract: "DatasetContract | MethodAdapterContract | MetricContract") -> str:
+    """Hash canonical contract semantics; raw file hashes are recorded separately."""
+    serialized = json.dumps(contract.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -298,8 +386,14 @@ class CanonicalResultEnvelope:
     hashes: dict[str, str]
     schema_version: str = RESULT_ENVELOPE_SCHEMA_VERSION
     schema_id: str = RESULT_ENVELOPE_SCHEMA_ID
+    metric_contract: dict[str, Any] | None = None
 
     def validate(self) -> "CanonicalResultEnvelope":
+        """Validate record structure and declared metric policy, not execution context.
+
+        Runtime producers must use evaluate_metric, whose preflight and emission
+        checks bind the concrete dataset/method/reference and gate the callback.
+        """
         _require_schema(self.schema_id, RESULT_ENVELOPE_SCHEMA_ID)
         _require_version(self.schema_version, RESULT_ENVELOPE_SCHEMA_VERSION, RESULT_ENVELOPE_SCHEMA_ID)
         for value, name in (
@@ -317,14 +411,17 @@ class CanonicalResultEnvelope:
             raise ContractError("MISSING_POINT_ESTIMATE", "admissible result requires a point estimate")
         if self.admissibility == "ADMISSIBLE" and not _finite_number(self.point_estimate):
             raise ContractError("NONFINITE_POINT_ESTIMATE", "admissible result requires a finite point estimate")
+        specification = resolve_metric_contract(
+            self.metric_id, MetricContract.from_dict(self.metric_contract) if self.metric_contract is not None else None,
+        )
         if self.admissibility == "ADMISSIBLE":
-            assert_metric_admissible(self.metric_id, self.evidence_boundary)
+            assert_metric_admissible(self.metric_id, self.evidence_boundary, metric_contract=specification)
         if not isinstance(self.hashes, dict) or any(
             not isinstance(key, str) or not key.strip() or not isinstance(value, str) or not value.strip()
             for key, value in self.hashes.items()
         ):
             raise ContractError("MISSING_EVIDENCE_BINDING", "hashes must be a text-to-text mapping")
-        if self.admissibility == "ADMISSIBLE" and self.metric_id in CLEAN_REFERENCE_METRICS:
+        if self.admissibility == "ADMISSIBLE" and specification is not None and specification.requires_clean_reference:
             if self.evidence_boundary != "clean_reference":
                 raise ContractError(
                     "INCOMPATIBLE_EVIDENCE_BOUNDARY",
@@ -349,6 +446,12 @@ class CanonicalResultEnvelope:
         _text_sequence(self.nesting, "nesting")
         if not self.nesting or self.nesting[0] != self.independent_unit:
             raise ContractError("INVALID_NESTING", "nesting must start with independent_unit")
+        if self.uncertainty is not None and not isinstance(self.uncertainty, dict):
+            raise ContractError("INVALID_UNCERTAINTY", "uncertainty must be an object or null")
+        try:
+            json.dumps(self.uncertainty, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise ContractError("INVALID_UNCERTAINTY", "uncertainty must contain finite JSON-compatible values") from exc
         return self
 
     def validate_against_dataset(
@@ -375,7 +478,10 @@ class CanonicalResultEnvelope:
             )
         if self.hashes.get("dataset_contract_sha256", "").lower() != contract_digest:
             raise ContractError("EVIDENCE_HASH_MISMATCH", "dataset-contract digest does not match envelope")
-        if self.admissibility == "ADMISSIBLE" and self.metric_id in CLEAN_REFERENCE_METRICS:
+        specification = resolve_metric_contract(
+            self.metric_id, MetricContract.from_dict(self.metric_contract) if self.metric_contract is not None else None,
+        )
+        if self.admissibility == "ADMISSIBLE" and specification is not None and specification.requires_clean_reference:
             if dataset.reference_availability != "exact_clean":
                 raise ContractError("INCOMPATIBLE_EVIDENCE_BOUNDARY", "dataset lacks exact clean reference")
             reference_digest = _require_sha256(
@@ -404,18 +510,133 @@ class CanonicalResultEnvelope:
         return cls(schema_id=schema_id, **data).validate()
 
 
-def metric_admissibility(metric_id: str, evidence_boundary: str) -> tuple[str, str]:
+def metric_admissibility(
+    metric_id: str, evidence_boundary: str, *, metric_contract: MetricContract | None = None,
+) -> tuple[str, str]:
     if evidence_boundary not in EVIDENCE_BOUNDARIES:
         raise ContractError("INCOMPATIBLE_EVIDENCE_BOUNDARY", evidence_boundary)
-    if metric_id in CLEAN_REFERENCE_METRICS and evidence_boundary != "clean_reference":
-        return "WITHHELD", f"{metric_id} requires an exact clean-reference evidence boundary"
+    specification = resolve_metric_contract(metric_id, metric_contract)
+    if specification is None:
+        return "WITHHELD", f"{metric_id} has no declared metric requirements"
+    if evidence_boundary not in specification.evidence_boundaries:
+        return "WITHHELD", f"{metric_id} requires evidence in {specification.evidence_boundaries}"
     return "ADMISSIBLE", "metric is compatible with the declared evidence boundary"
 
 
-def assert_metric_admissible(metric_id: str, evidence_boundary: str) -> None:
-    status, reason = metric_admissibility(metric_id, evidence_boundary)
+def assert_metric_admissible(
+    metric_id: str, evidence_boundary: str, *, metric_contract: MetricContract | None = None,
+) -> None:
+    status, reason = metric_admissibility(metric_id, evidence_boundary, metric_contract=metric_contract)
     if status != "ADMISSIBLE":
         raise ContractError("INCOMPATIBLE_EVIDENCE_BOUNDARY", reason)
+
+
+def contextual_admissibility(
+    metric_id: str, dataset: DatasetContract, method: MethodAdapterContract,
+    *, hashes: dict[str, str] | None = None, metric_contract: MetricContract | None = None,
+) -> tuple[str, str, dict[str, str]]:
+    """Compose structural, evidence, method-domain, and concrete binding checks.
+
+    Returns status/reason plus bound semantic digests. Invalid declarations or
+    conflicting bindings raise ContractError. Unsupported requests are value-free
+    abstentions. Files/arrays must be loaded and validated by the caller; a supplied
+    clean-reference digest identifies those observed bytes, not biological truth.
+    """
+    dataset.validate()
+    method.validate()
+    specification = resolve_metric_contract(metric_id, metric_contract)
+    bound = dict(hashes or {})
+    for key, contract in (("dataset_contract_sha256", dataset), ("method_contract_sha256", method)):
+        expected = contract_digest(contract)
+        if key in bound and _require_sha256(bound[key], key) != expected:
+            raise ContractError("EVIDENCE_HASH_MISMATCH", f"{key} does not identify the supplied contract")
+        bound[key] = expected
+    if specification is not None:
+        expected = contract_digest(specification)
+        if "metric_contract_sha256" in bound and _require_sha256(bound["metric_contract_sha256"], "metric_contract_sha256") != expected:
+            raise ContractError("EVIDENCE_HASH_MISMATCH", "metric requirements changed")
+        bound["metric_contract_sha256"] = expected
+    status, reason = metric_admissibility(metric_id, dataset.evidence_boundary, metric_contract=specification)
+    if status != "ADMISSIBLE":
+        return status, reason, bound
+    assert specification is not None
+    if method.output_class not in specification.output_classes:
+        return "WITHHELD", f"{metric_id} does not support output class {method.output_class}", bound
+    domain = method.domain_status(specification.domain)
+    if domain["status"] != "SUPPORTED":
+        return "WITHHELD", domain["reason"], bound
+    if specification.requires_clean_reference:
+        if dataset.reference_availability != "exact_clean":
+            raise ContractError("INCOMPATIBLE_EVIDENCE_BOUNDARY", "dataset lacks exact clean reference")
+        declared = _require_sha256(dataset.provenance.get("clean_reference_sha256"), "dataset.provenance.clean_reference_sha256")
+        observed = _require_sha256(bound.get("clean_reference_sha256"), "hashes.clean_reference_sha256")
+        if declared != observed:
+            raise ContractError("EVIDENCE_HASH_MISMATCH", "observed clean reference differs from dataset declaration")
+    return "ADMISSIBLE", "evidence, output class, domain, and contract bindings agree", bound
+
+
+def validate_result_against_context(
+    result: CanonicalResultEnvelope, dataset: DatasetContract, method: MethodAdapterContract,
+) -> CanonicalResultEnvelope:
+    """Recheck context on emission/import; structural validate() alone is insufficient."""
+    specification = MetricContract.from_dict(result.metric_contract) if result.metric_contract is not None else None
+    status, reason, _ = contextual_admissibility(
+        result.metric_id, dataset, method, hashes=result.hashes, metric_contract=specification,
+    )
+    result.validate_against_dataset(dataset, dataset_contract_sha256=contract_digest(dataset))
+    if result.method_id != method.method_id:
+        raise ContractError("METHOD_ID_MISMATCH", "result identifies another method")
+    if result.independent_unit != dataset.independent_unit or tuple(result.nesting) != tuple(dataset.nesting):
+        raise ContractError("INVALID_NESTING", "result hierarchy differs from the declared dataset")
+    if result.admissibility == "ADMISSIBLE" and status != "ADMISSIBLE":
+        raise ContractError("INCOMPATIBLE_METRIC_DOMAIN", reason)
+    return result
+
+
+def evaluate_metric(
+    metric_id: str, dataset: DatasetContract, method: MethodAdapterContract, *,
+    run_id: str, metric_version: str, units: str, analysis: Callable[[], Any],
+    taxonomy_version: str, hashes: dict[str, str] | None = None,
+    provenance_parents: tuple[str, ...] = (), warnings: tuple[str, ...] = (),
+    metric_contract: MetricContract | None = None,
+) -> CanonicalResultEnvelope:
+    """The public runtime gate: check before calling analysis and again on emission.
+
+    Analysis returns a scalar or (scalar, uncertainty). Nonfinite/undefined scalars
+    become reason-bearing WITHHELD records. Other invalid values raise a typed
+    error. No callback is invoked for unknown or incompatible metric requests.
+    """
+    specification = resolve_metric_contract(metric_id, metric_contract)
+    status, reason, bound = contextual_admissibility(
+        metric_id, dataset, method, hashes=hashes, metric_contract=specification,
+    )
+    value, uncertainty = None, None
+    emitted_warnings = tuple(warnings)
+    if status == "ADMISSIBLE":
+        computed = analysis()
+        if isinstance(computed, tuple) and len(computed) == 2:
+            value, uncertainty = computed
+        else:
+            value = computed
+        if isinstance(value, np.generic):
+            value = value.item()
+        if value is None or (isinstance(value, float) and not math.isfinite(value)):
+            status, value, uncertainty = "WITHHELD", None, None
+            emitted_warnings += ("metric is undefined or non-finite for this input",)
+        elif not _finite_number(value):
+            raise ContractError("NONFINITE_POINT_ESTIMATE", "analysis must return a real finite numeric estimate")
+    else:
+        emitted_warnings += (reason,)
+    result = CanonicalResultEnvelope(
+        dataset_id=dataset.dataset_id, method_id=method.method_id, run_id=run_id,
+        evidence_boundary=dataset.evidence_boundary, independent_unit=dataset.independent_unit,
+        nesting=dataset.nesting, metric_id=metric_id, metric_version=metric_version,
+        units=units, point_estimate=value, uncertainty=uncertainty, admissibility=status,
+        warnings=emitted_warnings, taxonomy_version=taxonomy_version,
+        provenance_parents=provenance_parents, hashes=bound,
+        metric_contract=specification.to_dict() if specification is not None else None,
+    )
+    return validate_result_against_context(result, dataset, method)
 
 
 def compare_dataset_rates(left: DatasetContract, right: DatasetContract) -> None:

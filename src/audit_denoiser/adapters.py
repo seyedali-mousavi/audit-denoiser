@@ -12,7 +12,7 @@ from typing import Protocol
 
 import numpy as np
 
-from .contracts import ContractError, DatasetContract, MethodAdapterContract
+from .contracts import ContractError, DatasetContract, MethodAdapterContract, validate_numeric_array
 from .movie_io import load_movie, supported_extensions
 
 
@@ -114,15 +114,18 @@ def validate_contract_method_output(
     if not path.is_file():
         raise FileNotFoundError(f"method output not found: {path}")
     if contract.output_class in {"full_movie", "component_reconstruction"}:
-        _, meta = load_movie(path, max_frames=1)
         if dataset.axes != "THW":
             raise ContractError("WRONG_AXES", f"movie output requires THW dataset, found {dataset.axes}")
-        if tuple(meta["original_shape"]) != tuple(dataset.shape):
+        movie, meta = load_movie(path, stack_order=dataset.axes, max_frames=1)
+        if tuple(meta["original_shape"]) != tuple(dataset.shape) or tuple(meta["canonical_shape"]) != tuple(dataset.shape):
             raise ContractError(
                 "FRAME_COUNT_MISMATCH",
                 f"movie shape {tuple(meta['original_shape'])} does not match dataset {dataset.shape}",
             )
-        return {"status": "SUPPORTED", "output_class": contract.output_class, "source_format": meta["source_format"]}
+        if movie.shape != (1, *dataset.shape[1:]):
+            raise ContractError("FRAME_COUNT_MISMATCH", "loaded movie does not match declared prefix shape")
+        return {"status": "SUPPORTED", "output_class": contract.output_class, "source_format": meta["source_format"],
+                "dtype": meta["original_dtype"], "dtype_policy": "real_numeric", "axes": "THW"}
     if contract.output_class == "trace_only":
         if path.suffix.lower() == ".npy":
             traces = np.load(path, allow_pickle=False)
@@ -130,6 +133,7 @@ def validate_contract_method_output(
             traces = np.loadtxt(path, delimiter=",", skiprows=1)
         else:
             raise ContractError("UNSUPPORTED_TRACE_FORMAT", path.suffix)
+        validate_numeric_array(traces)
         if traces.ndim != 2:
             raise ContractError("WRONG_AXES", f"trace-only output must be [T,R], found {traces.shape}")
         if "T" not in dataset.axes:
@@ -140,5 +144,8 @@ def validate_contract_method_output(
                 "FRAME_COUNT_MISMATCH",
                 f"trace output has {traces.shape[0]} frames; dataset declares {expected_frames}",
             )
-        return {"status": "SUPPORTED", "output_class": "trace_only", "shape": str(tuple(traces.shape))}
+        if traces.shape[1] <= 0:
+            raise ContractError("INVALID_SHAPE", "trace output requires at least one trace")
+        return {"status": "SUPPORTED", "output_class": "trace_only", "shape": str(tuple(traces.shape)),
+                "dtype": str(traces.dtype), "dtype_policy": "real_numeric", "axes": "TR"}
     raise ContractError("UNSUPPORTED_OUTPUT_CLASS", contract.output_class)

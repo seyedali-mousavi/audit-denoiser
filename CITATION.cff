@@ -1,9 +1,10 @@
-# Local software citation metadata, prepared 2026-09-05; not a release claim.
-# TODO doi: no archival software DOI has been minted.
+# Version 1.3.0 prepared 2026-09-08; see its tagged release record.
+# Previous public version 1.2.0: https://doi.org/10.5281/zenodo.22336513
+# A new version-specific DOI must be recorded after the 1.3.0 release is archived.
 cff-version: 1.2.0
 message: "If you use this software, cite the software metadata and its accompanying manuscript."
 title: "calcium-denoiser-audit: executable evidence contracts for fail-closed biomedical evaluation"
-version: 1.2.0
+version: 1.3.0
 license: MIT
 repository-code: "https://github.com/seyedali-mousavi/audit-denoiser"
 type: software

@@ -27,6 +27,7 @@ from audit_denoiser.contracts import (
     DatasetContract,
     MethodAdapterContract,
     RESULT_ENVELOPE_SCHEMA_VERSION,
+    MetricContract,
 )
 
 
@@ -122,6 +123,12 @@ def make_payload(index: int, seed: int = FROZEN_SEED) -> dict[str, Any]:
         "independent_unit": "source_recording",
         "nesting": ["source_recording", "lead", "condition"],
         "metric_id": f"generic_waveform_fidelity_{index:08d}",
+        # Explicit synthetic record policy, not biomedical fidelity validation.
+        # This benchmark measures structural envelope processing only.
+        "metric_contract": MetricContract(
+            f"generic_waveform_fidelity_{index:08d}", "synthetic_envelope_workload",
+            ("clean_reference",), ("trace_only",), False,
+        ).to_dict(),
         "metric_version": "1.0.0",
         "units": "dimensionless",
         "point_estimate": ((index % 1_000) + 1) / 1_001.0 if admissible else None,

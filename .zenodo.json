@@ -11,5 +11,14 @@
     }
   ],
   "license": "MIT",
-  "upload_type": "software"
+  "upload_type": "software",
+  "version": "1.3.0",
+  "description": "Version 1.3.0 strengthens contract-driven biomedical evaluation with authoritative declared axes, real numerical output validation, and contextual metric/evidence/method gates before analysis and on result emission. Explicit external metric requirements are supported without core registration. The accompanying manuscripts are in preparation and have not been submitted. This metadata does not assert an archival DOI or public CI result for this version. Previous public version 1.2.0 is archived at https://doi.org/10.5281/zenodo.22336513.",
+  "related_identifiers": [
+    {
+      "identifier": "10.5281/zenodo.22336513",
+      "relation": "isNewVersionOf",
+      "scheme": "doi"
+    }
+  ]
 }

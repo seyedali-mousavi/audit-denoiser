@@ -13,6 +13,8 @@ from pathlib import Path
 import numpy as np
 import tifffile
 
+from .contracts import validate_numeric_array
+
 
 _TIFF_EXT = {".tif", ".tiff"}
 _NPY_EXT = {".npy"}
@@ -136,9 +138,11 @@ def load_movie(
             f"unsupported input extension {extension!r}; supported: {', '.join(supported_extensions())}"
         )
 
+    validate_numeric_array(raw)
     original_shape = tuple(int(size) for size in raw.shape)
     original_dtype = str(raw.dtype)
     canonical = np.asarray(canonicalize_stack(raw, stack_order=stack_order))
+    canonical_shape = list(canonical.shape)
     if max_frames is not None and int(max_frames) <= 0:
         raise ValueError("max_frames must be a positive integer")
     truncated = max_frames is not None and canonical.shape[0] > int(max_frames)
@@ -150,6 +154,7 @@ def load_movie(
         "source_path": str(source),
         "original_shape": list(original_shape),
         "original_dtype": original_dtype,
+        "canonical_shape": canonical_shape,
         "n_frames": int(stack.shape[0]),
         "height": int(stack.shape[1]),
         "width": int(stack.shape[2]),

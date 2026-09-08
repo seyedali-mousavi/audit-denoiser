@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from .contracts import CanonicalResultEnvelope
+from .contracts import CanonicalResultEnvelope, MetricContract
 from .schema import sha256
 from .taxonomy import LEGACY_TAXONOMY_VERSION
 
@@ -39,7 +39,7 @@ def migrate_legacy_verdict_csv(
         lexeme = row[legacy_field]
         lexemes[metric_id] = lexeme
         hashes = {"source_sha256": source_hash}
-        if metric_id == "amp_pres_to_clean" and evidence_boundary == "clean_reference":
+        if evidence_boundary == "clean_reference":
             if dataset_contract_sha256 is None or clean_reference_sha256 is None:
                 raise ValueError(
                     "clean-reference legacy migration requires dataset_contract_sha256 "
@@ -67,6 +67,13 @@ def migrate_legacy_verdict_csv(
                 taxonomy_version=LEGACY_TAXONOMY_VERSION,
                 provenance_parents=(path.as_posix(),),
                 hashes=hashes,
+                # Historical imports preserve recorded values. Explicit policies
+                # identify their declared evidence requirements; this operation
+                # does not re-execute the original scientific analysis.
+                metric_contract=None if metric_id == "amp_pres_to_clean" else MetricContract(
+                    metric_id, "legacy_compact_verdict", ("clean_reference",),
+                    ("full_movie", "component_reconstruction"), True,
+                ).to_dict(),
             ).validate()
         )
     return envelopes, lexemes

@@ -16,7 +16,7 @@ from .adapters import (
     validate_adapters,
     validate_contract_method_output,
 )
-from .contracts import DatasetContract, MethodAdapterContract
+from .contracts import DatasetContract, MethodAdapterContract, contract_digest
 from .reference_free import run_reference_free_audit, write_reference_free_results
 from .run_identity import RunIdentityInputs, SafeRunRegistry, atomic_json, source_tree_identity
 from .schema import command_manifest, sha256, write_manifest
@@ -168,8 +168,10 @@ def main(argv: list[str] | None = None) -> int:
         method = MethodAdapterContract.read(args.method_contract)
         parents = {
             "output_sha256": sha256(args.output),
-            "dataset_contract_sha256": sha256(args.dataset_contract),
-            "method_contract_sha256": sha256(args.method_contract),
+            "dataset_contract_file_sha256": sha256(args.dataset_contract),
+            "method_contract_file_sha256": sha256(args.method_contract),
+            "dataset_contract_sha256": contract_digest(dataset),
+            "method_contract_sha256": contract_digest(method),
         }
         identity = RunIdentityInputs(
             protocol_identity="output-validation-v1",
@@ -207,8 +209,10 @@ def main(argv: list[str] | None = None) -> int:
         method = MethodAdapterContract.read(args.method_contract)
         parents = {
             "movie_sha256": sha256(args.movie),
-            "dataset_contract_sha256": sha256(args.dataset_contract),
-            "method_contract_sha256": sha256(args.method_contract),
+            "dataset_contract_file_sha256": sha256(args.dataset_contract),
+            "method_contract_file_sha256": sha256(args.method_contract),
+            "dataset_contract_sha256": contract_digest(dataset),
+            "method_contract_sha256": contract_digest(method),
         }
         identity = RunIdentityInputs(
             protocol_identity="reference-free-core-v1",

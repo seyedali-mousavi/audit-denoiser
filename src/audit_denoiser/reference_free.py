@@ -13,7 +13,9 @@ from .contracts import (
     CanonicalResultEnvelope,
     DatasetContract,
     MethodAdapterContract,
-    metric_admissibility,
+    ContractError,
+    REFERENCE_FREE_METRICS,
+    evaluate_metric,
 )
 from .movie_io import load_movie
 from .schema import sha256
@@ -73,58 +75,41 @@ def run_reference_free_audit(
     method.validate()
     if dataset.evidence_boundary not in {"reference_free", "pseudo_reference"}:
         raise ValueError("reference-free lane requires reference_free or pseudo_reference evidence boundary")
-    domain = method.domain_status("reference_free_movie")
+    if method.output_class not in {"full_movie", "component_reconstruction"}:
+        raise ContractError("UNSUPPORTED_OUTPUT_CLASS", "reference-free movie audit requires movie/component output")
+    if dataset.axes != "THW":
+        raise ContractError("WRONG_AXES", f"reference-free movie lane requires THW axes, found {dataset.axes}")
     parent_hash = sha256(movie_path)
     envelopes: list[CanonicalResultEnvelope] = []
-    if domain["status"] == "WITHHELD":
-        return [
-            CanonicalResultEnvelope(
-                dataset_id=dataset.dataset_id, method_id=method.method_id, run_id=run_id,
-                evidence_boundary=dataset.evidence_boundary, independent_unit=dataset.independent_unit,
-                nesting=dataset.nesting, metric_id="reference_free_movie_domain", metric_version=REFERENCE_FREE_METRIC_VERSION,
-                units="status", point_estimate=None, uncertainty=None, admissibility="WITHHELD",
-                warnings=(domain["reason"],), taxonomy_version=CURRENT_TAXONOMY_VERSION,
-                provenance_parents=(str(movie_path),), hashes={"movie_sha256": parent_hash},
-            ).validate()
-        ]
-    movie, meta = load_movie(movie_path, max_frames=max_frames)
-    if dataset.axes != "THW":
-        raise ValueError(f"reference-free movie lane requires THW axes, found {dataset.axes}")
-    if tuple(meta["original_shape"]) != tuple(dataset.shape):
-        raise ValueError(f"dataset contract shape {dataset.shape} does not match source {tuple(meta['original_shape'])}")
+    movie, meta = load_movie(movie_path, stack_order=dataset.axes, max_frames=max_frames)
+    if tuple(meta["original_shape"]) != tuple(dataset.shape) or tuple(meta["canonical_shape"]) != tuple(dataset.shape):
+        raise ContractError("FRAME_COUNT_MISMATCH", f"dataset contract shape {dataset.shape} does not match source {tuple(meta['original_shape'])}")
+    expected = (min(dataset.shape[0], max_frames), *dataset.shape[1:]) if max_frames is not None else dataset.shape
+    if movie.shape != tuple(expected):
+        raise ContractError("FRAME_COUNT_MISMATCH", f"loaded prefix {movie.shape} != declared prefix {expected}")
     if np.dtype(meta["original_dtype"]) != np.dtype(dataset.dtype):
-        raise ValueError(f"dataset contract dtype {dataset.dtype} does not match source {meta['original_dtype']}")
-    for metric_id, value in reference_free_metrics(movie).items():
-        finite = bool(np.isfinite(value))
-        envelopes.append(
-            CanonicalResultEnvelope(
-                dataset_id=dataset.dataset_id, method_id=method.method_id, run_id=run_id,
-                evidence_boundary=dataset.evidence_boundary, independent_unit=dataset.independent_unit,
-                nesting=dataset.nesting, metric_id=metric_id, metric_version=REFERENCE_FREE_METRIC_VERSION,
-                units="ratio" if metric_id != "robust_dynamic_range" else dataset.units,
-                point_estimate=value if finite else None, uncertainty=None,
-                admissibility="ADMISSIBLE" if finite else "WITHHELD",
-                warnings=() if finite else ("metric is undefined or non-finite for this input",),
-                taxonomy_version=CURRENT_TAXONOMY_VERSION, provenance_parents=(str(movie_path),),
-                hashes={"movie_sha256": parent_hash},
-            ).validate()
-        )
-    for metric_id in sorted(CLEAN_REFERENCE_METRICS):
-        status, reason = metric_admissibility(metric_id, dataset.evidence_boundary)
-        envelopes.append(
-            CanonicalResultEnvelope(
-                dataset_id=dataset.dataset_id, method_id=method.method_id, run_id=run_id,
-                evidence_boundary=dataset.evidence_boundary, independent_unit=dataset.independent_unit,
-                nesting=dataset.nesting, metric_id=metric_id, metric_version=REFERENCE_FREE_METRIC_VERSION,
-                units="withheld", point_estimate=None, uncertainty=None, admissibility=status,
-                warnings=(reason,), taxonomy_version=CURRENT_TAXONOMY_VERSION,
-                provenance_parents=(str(movie_path),), hashes={"movie_sha256": parent_hash},
-            ).validate()
-        )
+        raise ContractError("DTYPE_MISMATCH", f"dataset contract dtype {dataset.dtype} does not match source {meta['original_dtype']}")
+    cached: dict[str, float] = {}
+
+    def analyze(metric_id: str) -> float:
+        # This cache is populated only from an admitted request. All six built-in
+        # reference-free movie endpoints share the same evidence/domain policy.
+        if not cached:
+            cached.update(reference_free_metrics(movie))
+        return cached[metric_id]
+
+    for metric_id in sorted(REFERENCE_FREE_METRICS | CLEAN_REFERENCE_METRICS):
+        envelopes.append(evaluate_metric(
+            metric_id, dataset, method, run_id=run_id, metric_version=REFERENCE_FREE_METRIC_VERSION,
+            units=dataset.units if metric_id == "robust_dynamic_range" else "ratio",
+            analysis=lambda metric_id=metric_id: analyze(metric_id),
+            taxonomy_version=CURRENT_TAXONOMY_VERSION, provenance_parents=(str(movie_path),),
+            hashes={"movie_sha256": parent_hash},
+        ))
     return envelopes
 
 
 def write_reference_free_results(results: list[CanonicalResultEnvelope], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    serialized = json.dumps([r.to_dict() for r in results], indent=2, sort_keys=True) + "\n"
+    serialized = json.dumps([r.validate().to_dict() for r in results], indent=2, sort_keys=True, allow_nan=False) + "\n"
     path.write_bytes(serialized.encode("utf-8"))

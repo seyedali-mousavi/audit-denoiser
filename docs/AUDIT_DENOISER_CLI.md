@@ -72,17 +72,32 @@ lane never accept a dummy clean reference. Clean-reference-only metric domains
 are emitted as `WITHHELD` with a machine-readable reason.
 
 `validate-output` accepts `full_movie`, `component_reconstruction`, and
-`trace_only` method contracts, verifies the output shape/type, and emits a
+`trace_only` method contracts, verifies real numerical output type and class-relative shape, and emits a
 content-addressed exact-output manifest without computing a scientific metric.
 The external-style example in `examples/audit_core_external_adapter/` shows a
 trace-producing integration that requires no change to the core registry.
+
+The contract-driven movie commands use the declared THW order and verify the
+actual loaded prefix. Output dtype may differ from input dtype, but strings,
+booleans, objects and complex values are not certified as real biomedical arrays.
+Movie/component shapes must match the dataset; trace outputs preserve T and contain
+at least one trace. Domain declarations in an output-validation manifest do not
+certify that a metric is admissible.
+
+Runtime metrics in the standalone reference-free producer and ECG tool pass through
+`evaluate_metric`: explicit endpoint requirements, evidence, output class, method
+domain and concrete reference/contract bindings are checked before analysis and
+again on emission. Unknown metrics are withheld. `CanonicalResultEnvelope.validate`
+alone checks structure and declared policy, not execution context. Optional project
+bridges retain their historical interfaces and are not covered by this new gate.
 
 ## Deterministic fixture
 
 ```text
 audit_denoiser_fixture --out fixture
-audit_denoiser evaluate --name identity --raw fixture/raw.npy \
-  --reference fixture/clean.npy --denoised fixture/identity.npy --out audit
+audit_denoiser reference-free --name identity --movie fixture/identity.npy \
+  --dataset-contract examples/reference_free/dataset_contract.json \
+  --method-contract examples/reference_free/method_contract.json --out audit --max-frames 64
 ```
 
 The fixture contains four deterministic spatial sources, transient traces,

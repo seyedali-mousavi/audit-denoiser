@@ -14,10 +14,11 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
+import audit_denoiser
 from scipy.signal import butter, sosfiltfilt
 
 from audit_denoiser.adapters import validate_contract_method_output
@@ -26,6 +27,9 @@ from audit_denoiser.contracts import (
     ContractError,
     DatasetContract,
     MethodAdapterContract,
+    contract_digest,
+    evaluate_metric,
+    validate_numeric_array,
 )
 from audit_denoiser.run_identity import (
     RunIdentityInputs,
@@ -240,64 +244,88 @@ def _envelopes(
     dataset: DatasetContract,
     method: MethodAdapterContract,
     run_id: str,
-    record_metrics: dict[str, float],
+    record_metrics: dict[str, float] | None,
     hashes: dict[str, str],
+    *, analysis: Callable[[], dict[str, float]] | None = None,
 ) -> list[dict[str, Any]]:
     units = {
         "waveform_pearson_to_clean": "correlation",
         "waveform_nrmse_to_clean": "normalized_error",
         "waveform_snr_improvement_db": "dB",
     }
-    values = {
-        "waveform_pearson_to_clean": record_metrics["pearson_to_clean"],
-        "waveform_nrmse_to_clean": record_metrics["nrmse_to_clean"],
-        "waveform_snr_improvement_db": record_metrics["snr_improvement_db"],
+    fields = {
+        "waveform_pearson_to_clean": "pearson_to_clean",
+        "waveform_nrmse_to_clean": "nrmse_to_clean",
+        "waveform_snr_improvement_db": "snr_improvement_db",
     }
+    cache = record_metrics
+
+    def value_for(field: str) -> float:
+        nonlocal cache
+        if cache is None:
+            if analysis is None:
+                raise ContractError("MISSING_ANALYSIS", "admitted ECG request requires an analysis callback")
+            cache = analysis()
+        return cache[field]
+
     output = []
-    for metric_id, value in values.items():
-        output.append(
-            CanonicalResultEnvelope(
-                dataset_id=dataset.dataset_id,
-                method_id=method.method_id,
-                run_id=run_id,
-                evidence_boundary=dataset.evidence_boundary,
-                independent_unit=dataset.independent_unit,
-                nesting=dataset.nesting,
-                metric_id=metric_id,
-                metric_version="jr10-v1",
-                units=units[metric_id],
-                point_estimate=value,
-                uncertainty=None,
-                admissibility="ADMISSIBLE",
-                warnings=("descriptive two-record cross-modality case; leads are nested",),
-                taxonomy_version=CURRENT_TAXONOMY_VERSION,
-                provenance_parents=tuple(sorted(hashes.values())),
-                hashes=hashes,
-            ).validate().to_dict()
-        )
+    for metric_id, field in fields.items():
+        output.append(evaluate_metric(
+            metric_id, dataset, method, run_id=run_id, metric_version="jr10-v2-contextual-gate",
+            units=units[metric_id], analysis=lambda field=field: value_for(field),
+            warnings=("descriptive two-record cross-modality case; leads are nested",),
+            taxonomy_version=CURRENT_TAXONOMY_VERSION,
+            provenance_parents=tuple(sorted(hashes.values())), hashes=hashes,
+        ).to_dict())
     for domain in WITHHELD_DOMAINS:
-        status = method.domain_status(domain)
-        output.append(
-            CanonicalResultEnvelope(
-                dataset_id=dataset.dataset_id,
-                method_id=method.method_id,
-                run_id=run_id,
-                evidence_boundary=dataset.evidence_boundary,
-                independent_unit=dataset.independent_unit,
-                nesting=dataset.nesting,
-                metric_id=domain,
-                metric_version="jr10-v1",
-                units="not_applicable",
-                point_estimate=None,
-                uncertainty=None,
-                admissibility="WITHHELD",
-                warnings=(status["reason"],),
-                taxonomy_version=CURRENT_TAXONOMY_VERSION,
-                provenance_parents=tuple(sorted(hashes.values())),
-                hashes=hashes,
-            ).validate().to_dict()
-        )
+        def unavailable() -> float:
+            raise ContractError("MISSING_ANALYSIS", "this adapter implements only generic waveform endpoints")
+        output.append(evaluate_metric(
+            domain, dataset, method, run_id=run_id, metric_version="jr10-domain-admissibility-v2",
+            units="not_applicable", analysis=unavailable, taxonomy_version=CURRENT_TAXONOMY_VERSION,
+            provenance_parents=tuple(sorted(hashes.values())), hashes=hashes,
+        ).to_dict())
     return output
+
+
+def evaluate_ecg_waveforms(
+    noisy: np.ndarray, estimate: np.ndarray, clean: np.ndarray | None, fs: float,
+    dataset: DatasetContract, method: MethodAdapterContract, run_id: str,
+    hashes: dict[str, str],
+) -> tuple[list[dict[str, Any]], list[dict[str, float | int]], dict[str, float]]:
+    """Actual ECG producer: gate the shared analysis before any waveform metric runs."""
+    dataset.validate()
+    if dataset.axes != "TR":
+        raise ContractError("WRONG_AXES", "ECG producer requires declared time-by-lead TR axes")
+    dataset.validate_array(noisy)
+    validate_numeric_array(noisy)
+    validate_numeric_array(estimate)
+    if np.asarray(estimate).shape != dataset.shape:
+        raise ContractError("FRAME_COUNT_MISMATCH", "estimated waveform differs from declared dataset shape")
+    if float(fs) != dataset.frame_rate_hz or float(fs) != EXPECTED_FS:
+        raise ContractError("FRAME_RATE_MISMATCH", "observed ECG rate differs from declared/fixed rate")
+    lead_metrics: list[dict[str, float | int]] = []
+    record_metrics: dict[str, float] = {}
+    observed = dict(hashes)
+    if clean is not None:
+        validate_numeric_array(clean)
+        if np.asarray(clean).shape != dataset.shape:
+            raise ContractError("FRAME_COUNT_MISMATCH", "clean waveform differs from declared dataset shape")
+        digest = _array_sha256(clean)
+        if "clean_reference_sha256" in observed and observed["clean_reference_sha256"] != digest:
+            raise ContractError("EVIDENCE_HASH_MISMATCH", "provided digest differs from actual clean array")
+        observed["clean_reference_sha256"] = digest
+
+    def analysis() -> dict[str, float]:
+        lead_metrics.extend(evaluate_waveforms(noisy, estimate, clean, fs))
+        record_metrics.update({
+            key: float(np.mean([float(row[key]) for row in lead_metrics]))
+            for key in ("pearson_to_clean", "nrmse_to_clean", "snr_improvement_db")
+        })
+        return record_metrics
+
+    envelopes = _envelopes(dataset, method, run_id, None, observed, analysis=analysis)
+    return envelopes, lead_metrics, record_metrics
 
 
 def main() -> None:
@@ -314,7 +342,7 @@ def main() -> None:
     args.evidence_root.mkdir(parents=True, exist_ok=True)
     atomic_json(args.evidence_root / "method_contract.json", method.to_dict())
     method_contract_hash = sha256(args.evidence_root / "method_contract.json")
-    code_identity = source_tree_identity(Path(__file__).parents[1] / "audit_denoiser")
+    code_identity = source_tree_identity(Path(audit_denoiser.__file__).parent)
     registry = SafeRunRegistry(args.evidence_root / "runs")
     lead_rows: list[dict[str, Any]] = []
     record_rows: list[dict[str, Any]] = []
@@ -348,6 +376,7 @@ def main() -> None:
                 "alignment_evidence": alignment,
                 "clean_metadata": clean_meta,
                 "noisy_metadata": noisy_meta,
+                "clean_reference_sha256": _array_sha256(clean),
             }
             dataset = _contract_for(record, snr, clean_meta, provenance)
             contract_path = args.evidence_root / "contracts" / f"{cell_id}_dataset.json"
@@ -355,19 +384,15 @@ def main() -> None:
             validation = validate_contract_method_output(method, output_path, dataset)
             if validation.get("status") != "SUPPORTED":
                 raise RuntimeError(f"output contract failed for {cell_id}: {validation}")
-            metrics = evaluate_waveforms(noisy, estimate, clean, noisy_meta["fs"])
-            for row in metrics:
-                lead_rows.append({"record": record, "snr_db": int(snr), **row})
-            record_metrics = {
-                key: float(np.mean([float(row[key]) for row in metrics]))
-                for key in ("pearson_to_clean", "nrmse_to_clean", "snr_improvement_db")
-            }
             hashes = {
                 "clean_dat_sha256": sha256(args.data_root / "mitdb" / f"{record}.dat"),
                 "noisy_dat_sha256": sha256(args.data_root / "nstdb" / f"{noisy_id}.dat"),
                 "output_sha256": sha256(output_path),
-                "dataset_contract_sha256": sha256(contract_path),
-                "method_contract_sha256": method_contract_hash,
+                "dataset_contract_file_sha256": sha256(contract_path),
+                "method_contract_file_sha256": method_contract_hash,
+                "dataset_contract_sha256": contract_digest(dataset),
+                "method_contract_sha256": contract_digest(method),
+                "clean_reference_sha256": _array_sha256(clean),
             }
             identity = RunIdentityInputs(
                 protocol_identity=SCHEMA,
@@ -382,6 +407,11 @@ def main() -> None:
             )
             run_id = registry.run_id_for(identity, ["cell_result.json"])
             run_dir = registry.root / run_id
+            result_envelopes, metrics, record_metrics = evaluate_ecg_waveforms(
+                noisy, estimate, clean, noisy_meta["fs"], dataset, method, run_id, hashes,
+            )
+            for row in metrics:
+                lead_rows.append({"record": record, "snr_db": int(snr), **row})
             cell_payload = {
                 "schema_version": SCHEMA,
                 "status": "PASS",
@@ -392,7 +422,7 @@ def main() -> None:
                 "lead_metrics": metrics,
                 "record_metrics": record_metrics,
                 "withheld_domains": list(WITHHELD_DOMAINS),
-                "result_envelopes": _envelopes(dataset, method, run_id, record_metrics, hashes),
+                "result_envelopes": result_envelopes,
                 "hashes": hashes,
             }
             if run_dir.exists():

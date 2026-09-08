@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "org.calcium-denoiser-audit.result-envelope",
-  "title": "CanonicalResultEnvelope 1.1.0",
+  "title": "CanonicalResultEnvelope 1.2.0",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -29,7 +29,7 @@
       "const": "org.calcium-denoiser-audit.result-envelope"
     },
     "schema_version": {
-      "const": "1.1.0"
+      "const": "1.2.0"
     },
     "dataset_id": {
       "type": "string",
@@ -118,6 +118,16 @@
       "additionalProperties": {
         "type": "string"
       }
+    },
+    "metric_contract": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/metric_contract"
+        }
+      ]
     }
   },
   "allOf": [
@@ -162,30 +172,213 @@
     {
       "if": {
         "properties": {
-          "admissibility": {"const": "ADMISSIBLE"},
+          "admissibility": {
+            "const": "ADMISSIBLE"
+          },
           "metric_id": {
             "enum": [
               "psnr_to_clean",
               "ssim_to_clean",
               "amp_pres_to_clean",
-              "clean_derived_trace_fidelity"
+              "clean_derived_trace_fidelity",
+              "waveform_pearson_to_clean",
+              "waveform_nrmse_to_clean",
+              "waveform_snr_improvement_db"
             ]
           }
         },
-        "required": ["admissibility", "metric_id"]
+        "required": [
+          "admissibility",
+          "metric_id"
+        ]
       },
       "then": {
         "properties": {
-          "evidence_boundary": {"const": "clean_reference"},
+          "evidence_boundary": {
+            "const": "clean_reference"
+          },
           "hashes": {
-            "required": ["dataset_contract_sha256", "clean_reference_sha256"],
+            "required": [
+              "dataset_contract_sha256",
+              "clean_reference_sha256"
+            ],
             "properties": {
-              "dataset_contract_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
-              "clean_reference_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+              "dataset_contract_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{64}$"
+              },
+              "clean_reference_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{64}$"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "admissibility": {
+            "const": "ADMISSIBLE"
+          },
+          "metric_id": {
+            "not": {
+              "enum": [
+                "psnr_to_clean",
+                "ssim_to_clean",
+                "amp_pres_to_clean",
+                "clean_derived_trace_fidelity",
+                "waveform_pearson_to_clean",
+                "waveform_nrmse_to_clean",
+                "waveform_snr_improvement_db",
+                "finite_fraction",
+                "robust_dynamic_range",
+                "split_half_mean_map_correlation",
+                "global_trace_lag1_autocorrelation",
+                "temporal_difference_energy_ratio",
+                "seam_energy_ratio"
+              ]
+            }
+          }
+        },
+        "required": [
+          "admissibility",
+          "metric_id"
+        ]
+      },
+      "then": {
+        "required": [
+          "metric_contract"
+        ],
+        "properties": {
+          "metric_contract": {
+            "$ref": "#/$defs/metric_contract"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "admissibility": {
+            "const": "ADMISSIBLE"
+          },
+          "metric_contract": {
+            "type": "object",
+            "properties": {
+              "requires_clean_reference": {
+                "const": true
+              }
+            },
+            "required": [
+              "requires_clean_reference"
+            ]
+          }
+        },
+        "required": [
+          "admissibility",
+          "metric_contract"
+        ]
+      },
+      "then": {
+        "properties": {
+          "evidence_boundary": {
+            "const": "clean_reference"
+          },
+          "hashes": {
+            "required": [
+              "dataset_contract_sha256",
+              "clean_reference_sha256"
+            ],
+            "properties": {
+              "dataset_contract_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{64}$"
+              },
+              "clean_reference_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{64}$"
+              }
             }
           }
         }
       }
     }
-  ]
+  ],
+  "$defs": {
+    "metric_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metric_id",
+        "domain",
+        "evidence_boundaries",
+        "output_classes",
+        "requires_clean_reference",
+        "version"
+      ],
+      "properties": {
+        "metric_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "domain": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_boundaries": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "clean_reference",
+              "pseudo_reference",
+              "reference_free",
+              "trace_event_truth",
+              "locked_historical_final_test"
+            ]
+          }
+        },
+        "output_classes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "full_movie",
+              "component_reconstruction",
+              "trace_only"
+            ]
+          }
+        },
+        "requires_clean_reference": {
+          "type": "boolean"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "requires_clean_reference": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence_boundaries": {
+                "const": [
+                  "clean_reference"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
 }
